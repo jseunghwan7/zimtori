@@ -1,0 +1,12 @@
+{
+  "name": "짐토리",
+  "short_name": "짐토리",
+  "description": "문 앞 픽업 기반 보관 + 위탁 대여 수익화 서비스",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fff9ed",
+  "theme_color": "#ffb629",
+  "icons": [
+    { "src": "/assets/zimtori-symbol.png", "sizes": "500x500", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
