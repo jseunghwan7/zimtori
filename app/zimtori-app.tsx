@@ -198,11 +198,6 @@ const cabinetOptions = [
   { id: "XL" as const, boxes: "11박스 이상", price: 35000, image: "/assets/cabinets/xl.webp" },
 ];
 
-const seedOrders: Order[] = [
-  { id: "ST-260708", type: "보관", title: "M 캐비닛 보관", status: "보관 중", date: "2026-07-08", price: 26000, image: "/assets/cabinets/m.webp", details: { cabinet: "M 캐비닛 · 3~5박스", station: "신촌역", address: "서울 서대문구 연세로 12, 301호", pickupTime: "18:00 - 20:00", period: "2026-07-08 ~ 2026-08-20", consignment: false } },
-  { id: "RT-260704", type: "대여", title: "20인치 여행용 캐리어", status: "반납 예정", date: "2026-07-04", price: 31700, image: "/assets/products/suitcase.webp", details: { period: "2026-07-22 ~ 2026-07-25", location: "신촌역", rentalFee: 11700, deposit: 20000, returnDate: "2026-07-25" } },
-];
-
 const stationGroups = Object.entries(SUBWAY_LINE_COLORS).map(([line, color]) => ({
   line,
   color,
@@ -349,7 +344,7 @@ function usePersistentState<T>(key: string, initial: T) {
 export default function ZimtoriApp() {
   const [path, setPath] = useState("/");
   const [signedIn, setSignedIn] = usePersistentState("zimtori-demo-user", false);
-  const [favorites, setFavorites] = usePersistentState<number[]>("zimtori-favorites", [2, 4]);
+  const [favorites, setFavorites] = usePersistentState<number[]>("zimtori-favorites", []);
   const [draft, setDraft] = usePersistentState<StorageDraft>("zimtori-storage-draft-v2", initialDraft);
   const [orders, setOrders] = usePersistentState<Order[]>("zimtori-orders-v2", []);
   const [equipped, setEquipped] = usePersistentState<string[]>("zimtori-outfit", ["cap"]);
@@ -388,6 +383,10 @@ export default function ZimtoriApp() {
   };
 
   const demoLogin = () => {
+    setFavorites([]);
+    setOrders([]);
+    setDraft(initialDraft);
+    setEquipped(["cap"]);
     setSignedIn(true);
     setToast("체험 계정으로 로그인했어요");
     const next = sessionStorage.getItem("zimtori-next") || "/";
@@ -412,7 +411,7 @@ export default function ZimtoriApp() {
   let screen: React.ReactNode;
 
   if (path === "/login") {
-    screen = <LoginScreen onBack={() => navigate("/")} onDemo={demoLogin} onProvider={(provider) => showInfo(`${provider} 로그인 연결 준비`, `다음 단계에서 ${provider} 개발자 설정과 Supabase를 함께 연결해요. 지금은 체험 계정으로 전체 기능을 확인할 수 있어요.`)} />;
+    screen = <LoginScreen onBack={() => navigate("/")} onDemo={demoLogin} />;
   } else if (path === "/storage") {
     screen = <StorageFlow draft={draft} setDraft={setDraft} onBack={() => navigate("/")} onGoLend={() => { sessionStorage.setItem("zimtori-lend-origin", "storage"); navigate("/lend/new"); }} onComplete={() => {
       const cabinet = cabinetOptions.find((item) => item.id === draft.cabinet) || cabinetOptions[0];
@@ -446,7 +445,7 @@ export default function ZimtoriApp() {
     screen = signedIn ? <Orders orders={orders} onHome={() => navigate("/")} onDetail={(orderId) => navigate(`/orders/${orderId}`)} /> : <LoginNeeded onLogin={() => navigate("/login")} />;
   } else if (path.startsWith("/orders/")) {
     const orderId = path.split("/").pop();
-    const order = [...orders, ...seedOrders].find((item) => item.id === orderId);
+    const order = orders.find((item) => item.id === orderId);
     screen = signedIn && order ? <OrderDetail order={order} onBack={() => navigate("/orders")} onQuestion={() => showInfo("짐토리 문의", "선택한 이용 건으로 문의가 접수됐어요. 알림으로 답변드릴게요.")} /> : <LoginNeeded onLogin={() => navigate("/login")} />;
   } else if (path === "/favorites") {
     screen = <Favorites items={rentals.filter((item) => favorites.includes(item.id))} onBack={() => navigate("/my")} onOpen={openRental} onFavorite={toggleFavorite} />;
@@ -457,7 +456,7 @@ export default function ZimtoriApp() {
   } else if (path === "/support" || path === "/faq") {
     screen = <Support onBack={() => navigate("/my")} onSend={() => setToast("문의가 접수됐어요")} />;
   } else if (path === "/my") {
-    screen = signedIn ? <MyPage favorites={favorites.length} orderCount={orders.length} equipped={equipped} onNavigate={navigate} onInfo={showInfo} onLogout={() => { setSignedIn(false); setToast("로그아웃했어요"); navigate("/"); }} /> : <LoginNeeded onLogin={() => navigate("/login")} />;
+    screen = signedIn ? <MyPage favorites={favorites.length} orders={orders} equipped={equipped} onNavigate={navigate} onInfo={showInfo} onLogout={() => { setSignedIn(false); setFavorites([]); setOrders([]); setDraft(initialDraft); setEquipped(["cap"]); setToast("체험 계정에서 로그아웃했어요"); navigate("/"); }} /> : <LoginNeeded onLogin={() => navigate("/login")} />;
   } else {
     screen = <HomeScreen signedIn={signedIn} orders={orders} favorites={favorites} onNavigate={navigate} onProtected={requireLogin} onOpenRental={openRental} onFavorite={toggleFavorite} />;
   }
@@ -496,7 +495,7 @@ function HomeScreen({ signedIn, orders, favorites, onNavigate, onProtected, onOp
         <div className="hero-art"><span className="hero-bubble bubble-one">문 앞 픽업</span><span className="hero-bubble bubble-two">보관료 절약</span><div className="hero-halo" /><img src="/assets/zimtori-character-3d.png" alt="두 손을 모으고 웃는 짐토리 햄스터" /></div>
       </section>
 
-      {signedIn && <section className="status-strip"><div><span>안녕하세요, 승환님</span><strong>{orders.length ? "진행 중인 이용이 있어요" : "첫 보관을 시작해볼까요?"}</strong></div><div className="status-metrics"><span><b>{orders.length}</b>이용 중</span><span><b>{favorites.length}</b>찜</span><span><b>2,400P</b>포인트</span></div></section>}
+      {signedIn && <section className="status-strip"><div><span>안녕하세요, 체험 사용자님</span><strong>{orders.length ? "진행 중인 이용이 있어요" : "첫 보관을 시작해볼까요?"}</strong></div><div className="status-metrics"><span><b>{orders.length}</b>이용 중</span><span><b>{favorites.length}</b>찜</span><span><b>2,400P</b>포인트</span></div></section>}
 
       <section className="section-block"><div className="section-heading"><div><span className="section-kicker">빠른 시작</span><h2>무엇을 도와드릴까요?</h2></div></div><div className="quick-grid">
         <button onClick={() => onProtected("/storage")}><span className="quick-icon yellow"><Truck /></span><strong>문 앞 픽업</strong><small>무거운 짐도 편하게</small></button>
@@ -520,8 +519,8 @@ function RentalCard({ rental, favorite, onOpen, onFavorite }: { rental: Rental; 
   return <article className="rental-card"><button className={`favorite-button ${favorite ? "active" : ""}`} onClick={(event) => { event.stopPropagation(); onFavorite(); }} aria-label="찜하기"><Heart size={18} fill={favorite ? "currentColor" : "none"} /></button><button className="rental-main" onClick={onOpen}><div className="rental-thumb" style={{ background: rental.tone }}><img src={rental.image} alt={`${rental.name} 제품 사진`} onError={(event) => { event.currentTarget.src = "/assets/zimtori-symbol.png"; }} /><small>검수 완료</small></div><div className="rental-copy"><span>{rental.category} · {rental.location}</span><h3>{rental.name}</h3><div className="rental-rating"><Star size={13} fill="currentColor" />{rental.rating} <small>({rental.reviews})</small></div><p><strong>{won(rental.price)}</strong> / 일</p></div></button></article>;
 }
 
-function LoginScreen({ onBack, onDemo, onProvider }: { onBack: () => void; onDemo: () => void; onProvider: (provider: string) => void }) {
-  return <main className="auth-page"><button className="floating-back" onClick={onBack}><ArrowLeft size={22} /></button><div className="auth-art"><div className="auth-halo" /><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /></div><img className="auth-logo" src="/assets/zimtori-wordmark.png" alt="짐토리" /><h1>짐 걱정 없는 일상,<br />짐토리와 시작해요</h1><p>로그인하면 신청 현황과 대여 수익을<br />한곳에서 확인할 수 있어요.</p><div className="auth-buttons"><button className="social google" onClick={() => onProvider("Google")}><span>G</span>Google로 계속하기</button><button className="social kakao" onClick={() => onProvider("카카오")}><span>••</span>카카오로 계속하기</button><button className="demo-login" onClick={onDemo}><Sparkles size={17} />체험 계정으로 둘러보기</button></div><small className="auth-note">계속하면 짐토리의 <u>이용약관</u>과 <u>개인정보처리방침</u>에 동의하게 됩니다.</small></main>;
+function LoginScreen({ onBack, onDemo }: { onBack: () => void; onDemo: () => void }) {
+  return <main className="auth-page"><button className="floating-back" onClick={onBack}><ArrowLeft size={22} /></button><div className="auth-art"><div className="auth-halo" /><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /></div><img className="auth-logo" src="/assets/zimtori-wordmark.png" alt="짐토리" /><h1>짐 걱정 없는 일상,<br />짐토리와 시작해요</h1><p>체험 계정으로 신청과 대여 기능을<br />부담 없이 둘러보세요.</p><div className="auth-buttons"><button className="demo-login" onClick={onDemo}><Sparkles size={17} />체험 계정으로 둘러보기</button></div><small className="auth-note">체험 데이터는 현재 이용 중인 브라우저에만 저장돼요.</small></main>;
 }
 
 function LoginNeeded({ onLogin }: { onLogin: () => void }) {
@@ -977,7 +976,7 @@ function OrderVisual({ order }: { order: Order }) {
 
 function Orders({ orders, onHome, onDetail }: { orders: Order[]; onHome: () => void; onDetail: (orderId: string) => void }) {
   const [tab, setTab] = useState("전체");
-  const list = [...orders, ...seedOrders].filter((order) => tab === "전체" || order.type === tab);
+  const list = orders.filter((order) => tab === "전체" || order.type === tab);
   return <main className="page orders-page"><BrandHeader onNavigate={onHome} /><div className="page-title"><span className="section-kicker">MY ACTIVITY</span><h1>이용내역</h1><p>필요한 정보만 간단하게 확인하고 상세 내용을 열어보세요.</p></div><div className="tab-row">{["전체", "보관", "대여", "위탁 대여"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div><div className="order-list simple">{list.map((order) => <article key={order.id} className="order-card simple"><div className="order-image"><OrderVisual order={order} /></div><div className="order-card-copy"><div className="order-top"><span>{order.type}</span><b>{order.status}</b></div><h3>{order.title}</h3><p>{order.date} · {order.id}</p><div className="order-bottom"><strong>{won(order.price)}</strong><button onClick={() => onDetail(order.id)}>상세보기<ChevronRight size={16} /></button></div></div></article>)}</div>{!list.length && <div className="no-result"><ClipboardList /><strong>해당 이용내역이 없어요</strong><p>짐토리에서 첫 이용을 시작해보세요.</p><button className="primary-button" onClick={onHome}>홈으로 가기</button></div>}</main>;
 }
 
@@ -996,7 +995,7 @@ function Favorites({ items, onBack, onOpen, onFavorite }: { items: Rental[]; onB
 
 function Notifications({ onBack, onReadAll }: { onBack: () => void; onReadAll: () => void }) {
   const [read, setRead] = useState(false);
-  const list = [{ icon: Truck, title: "내일 픽업 예정이에요", body: "오후 6시~8시 사이에 방문할 예정이에요.", time: "10분 전" }, { icon: BadgeCheck, title: "보관 물품 검수가 완료됐어요", body: "등록한 박스 2개의 상태 확인을 마쳤어요.", time: "어제" }, { icon: Gift, title: "신규 가입 3,000P가 도착했어요", body: "짐토리 옷입히기에서 사용할 수 있어요.", time: "3일 전" }];
+  const list = [{ icon: Gift, title: "짐토리 체험 계정에 오신 것을 환영해요", body: "신청과 이용내역은 현재 브라우저에만 저장되며 다른 방문자에게 공유되지 않아요.", time: "지금" }];
   return <main className="page notification-page"><BrandHeader back={onBack} /><div className="page-title inline"><div><span className="section-kicker">NOTICE</span><h1>알림</h1></div><button onClick={() => { setRead(true); onReadAll(); }}>모두 읽음</button></div><div className="notification-list">{list.map(({ icon: Icon, title, body, time }) => <article key={title} className={read ? "read" : ""}><span><Icon size={20} /></span><div><strong>{title}</strong><p>{body}</p><small>{time}</small></div>{!read && <i />}</article>)}</div></main>;
 }
 
@@ -1004,13 +1003,14 @@ function AvatarCanvas({ equipped, compact = false }: { equipped: string[]; compa
   return <div className={`avatar-canvas ${compact ? "compact" : ""}`}><img className="avatar-base" src="/assets/zimtori-character-3d.png" alt={compact ? "저장한 코디를 입은 짐토리" : "꾸미는 중인 짐토리"} />{equipped.map((id) => { const item = outfitItems.find((entry) => entry.id === id); return item ? <img key={id} className={`outfit-layer outfit-${id}`} src={item.image} alt="" aria-hidden="true" /> : null; })}</div>;
 }
 
-function MyPage({ favorites, orderCount, equipped, onNavigate, onInfo, onLogout }: { favorites: number; orderCount: number; equipped: string[]; onNavigate: (path: string) => void; onInfo: (title: string, body: string) => void; onLogout: () => void }) {
+function MyPage({ favorites, orders, equipped, onNavigate, onInfo, onLogout }: { favorites: number; orders: Order[]; equipped: string[]; onNavigate: (path: string) => void; onInfo: (title: string, body: string) => void; onLogout: () => void }) {
+  const storageCount = orders.filter((order) => order.type === "보관").length;
   const menuGroups = [
-    { title: "나의 이용", items: [{ icon: ClipboardList, label: "보관·대여 이용내역", action: () => onNavigate("/orders") }, { icon: Heart, label: "찜한 물품", badge: String(favorites), action: () => onNavigate("/favorites") }, { icon: CircleDollarSign, label: "정산 관리", action: () => onInfo("정산 관리", "대여 수익 18,000원이 다음 정산일에 반영될 예정이에요.") }, { icon: TicketPercent, label: "쿠폰·포인트", badge: "2,400P", action: () => onInfo("쿠폰·포인트", "신규 가입 포인트와 아바타 꾸미기 포인트를 확인했어요.") }] },
-    { title: "내 정보", items: [{ icon: UserRound, label: "프로필 수정", action: () => onInfo("프로필 수정", "이름, 휴대전화번호와 프로필 이미지를 수정할 수 있어요.") }, { icon: MapPin, label: "배송지 관리", action: () => onInfo("배송지 관리", "기본 배송지는 서울 서대문구 연세로 12예요.") }, { icon: WalletCards, label: "결제수단 관리", action: () => onInfo("결제수단 관리", "실제 결제 연동 단계에서 안전하게 연결할 예정이에요.") }, { icon: Settings, label: "알림 설정", action: () => onInfo("알림 설정", "픽업, 반납, 정산, 이벤트 알림을 각각 설정할 수 있어요.") }] },
+    { title: "나의 이용", items: [{ icon: ClipboardList, label: "보관·대여 이용내역", action: () => onNavigate("/orders") }, { icon: Heart, label: "찜한 물품", badge: String(favorites), action: () => onNavigate("/favorites") }, { icon: CircleDollarSign, label: "정산 관리", action: () => onInfo("정산 관리", "아직 정산할 대여 수익이 없어요.") }, { icon: TicketPercent, label: "쿠폰·포인트", badge: "2,400P", action: () => onInfo("쿠폰·포인트", "체험 계정 포인트를 확인했어요.") }] },
+    { title: "내 정보", items: [{ icon: UserRound, label: "프로필 안내", action: () => onInfo("체험 계정", "체험 계정은 별도의 개인정보를 저장하지 않아요.") }, { icon: MapPin, label: "배송지 관리", action: () => onInfo("배송지 관리", "저장된 배송지가 없어요.") }, { icon: WalletCards, label: "결제수단 관리", action: () => onInfo("결제수단 관리", "체험 버전에서는 실제 결제수단을 저장하지 않아요.") }, { icon: Settings, label: "알림 설정", action: () => onInfo("알림 설정", "픽업, 반납, 정산, 이벤트 알림을 각각 설정할 수 있어요.") }] },
     { title: "고객지원", items: [{ icon: MessageCircleQuestion, label: "고객센터·FAQ", action: () => onNavigate("/support") }, { icon: Info, label: "약관 및 정책", action: () => onInfo("약관 및 정책", "베타 서비스 이용약관과 개인정보처리방침을 준비하고 있어요.") }] },
   ];
-  return <main className="page my-page"><BrandHeader onNavigate={onNavigate} /><section className="profile-hero"><div className="profile-avatar"><AvatarCanvas equipped={equipped} compact /></div><div><span>짐토리 새싹회원</span><h1>정승환님</h1><p>seunghwan@example.com</p></div><button onClick={() => onInfo("로그인 정보", "체험 계정으로 로그인 중이에요. 다음 단계에서 Google 또는 카카오 계정 정보를 연결할게요.")}><ChevronRight size={19} /></button></section><section className="point-card"><div><span>보유 포인트</span><strong>2,400P</strong><small>나만의 3D 짐토리 코디를 저장해보세요</small></div><button onClick={() => onNavigate("/my/avatar")}><Shirt size={19} />짐토리 옷입히기</button></section><section className="my-stats"><button onClick={() => onNavigate("/orders")}><b>{Math.max(2, orderCount)}</b><span>이용내역</span></button><button onClick={() => onInfo("보관 중", "현재 M 캐비닛 1건이 보관 중이에요.")}><b>1</b><span>보관 중</span></button><button onClick={() => onInfo("대여 수익", "누적 대여 수익은 18,000원이에요.")}><b>18,000</b><span>대여 수익</span></button></section>{menuGroups.map((group) => <section className="menu-group" key={group.title}><h2>{group.title}</h2>{group.items.map(({ icon: Icon, label, badge, action }) => <button key={label} onClick={action}><span><Icon size={19} /></span><strong>{label}</strong>{badge && <small>{badge}</small>}<ChevronRight size={17} /></button>)}</section>)}<button className="logout-button" onClick={onLogout}><LogOut size={18} />로그아웃</button><p className="version">짐토리 베타 v1.1.0</p></main>;
+  return <main className="page my-page"><BrandHeader onNavigate={onNavigate} /><section className="profile-hero"><div className="profile-avatar"><AvatarCanvas equipped={equipped} compact /></div><div><span>짐토리 체험회원</span><h1>체험 사용자님</h1><p>개인정보를 저장하지 않는 체험 계정</p></div><button onClick={() => onInfo("로그인 정보", "현재 브라우저에서만 사용하는 체험 계정이에요.")}><ChevronRight size={19} /></button></section><section className="point-card"><div><span>보유 포인트</span><strong>2,400P</strong><small>나만의 3D 짐토리 코디를 저장해보세요</small></div><button onClick={() => onNavigate("/my/avatar")}><Shirt size={19} />짐토리 옷입히기</button></section><section className="my-stats"><button onClick={() => onNavigate("/orders")}><b>{orders.length}</b><span>이용내역</span></button><button onClick={() => onInfo("보관 중", storageCount ? `현재 보관 신청 ${storageCount}건이 있어요.` : "현재 보관 중인 이용이 없어요.")}><b>{storageCount}</b><span>보관 중</span></button><button onClick={() => onInfo("대여 수익", "아직 확정된 대여 수익이 없어요.")}><b>0원</b><span>대여 수익</span></button></section>{menuGroups.map((group) => <section className="menu-group" key={group.title}><h2>{group.title}</h2>{group.items.map(({ icon: Icon, label, badge, action }) => <button key={label} onClick={action}><span><Icon size={19} /></span><strong>{label}</strong>{badge && <small>{badge}</small>}<ChevronRight size={17} /></button>)}</section>)}<button className="logout-button" onClick={onLogout}><LogOut size={18} />로그아웃</button><p className="version">짐토리 베타 v1.1.0</p></main>;
 }
 
 function AvatarStudio({ equipped, setEquipped, onBack, onSave }: { equipped: string[]; setEquipped: Dispatch<SetStateAction<string[]>>; onBack: () => void; onSave: () => void }) {
