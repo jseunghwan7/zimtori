@@ -2,6 +2,7 @@
 
 import Script from "next/script";
 import { SEOUL_SUBWAY_STATIONS, SUBWAY_LINE_COLORS } from "../data/seoul-subway-stations";
+import { trackEvent } from "../lib/analytics";
 import {
   AlertCircle,
   ArrowLeft,
@@ -182,6 +183,13 @@ type LendSubmission = {
   files: File[];
 };
 
+type RentalCompletion = {
+  total: number;
+  startDate: string;
+  endDate: string;
+  days: number;
+};
+
 const rentals: Rental[] = [
   { id: 1, name: "20인치 여행용 캐리어", category: "여행용품", price: 3900, deposit: 20000, location: "신촌역", rating: 4.9, reviews: 38, tone: "#fff4df", image: "/assets/products/suitcase.webp", owner: "짐토리 검수 완료", description: "가볍고 바퀴가 부드러운 기내용 캐리어예요. 2박 3일 여행에 딱 맞아요." },
   { id: 2, name: "미니 빔프로젝터", category: "생활가전", price: 6900, deposit: 50000, location: "건대입구역", rating: 4.8, reviews: 24, tone: "#fff4df", image: "/assets/products/projector.webp", owner: "민지님의 보관함", description: "캠핑이나 홈파티에 좋은 휴대용 빔프로젝터예요. HDMI 케이블을 함께 드려요." },
@@ -275,6 +283,15 @@ function haversineDistanceMeters(latitude: number, longitude: number, station: S
 
 function formatDistance(distance: number) {
   return distance < 1000 ? `약 ${Math.round(distance)}m` : `약 ${(distance / 1000).toFixed(1)}km`;
+}
+
+function addDays(dateString: string, days: number) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function openUploadDatabase() {
@@ -425,9 +442,19 @@ export default function ZimtoriApp() {
     const rental = rentals.find((item) => item.id === Number(path.split("/").pop())) || selectedRental;
     screen = <RentalDetail rental={rental} favorite={favorites.includes(rental.id)} onBack={() => navigate("/rentals")} onFavorite={() => toggleFavorite(rental.id)} onCheckout={() => requireLogin("/checkout")} onQuestion={() => showInfo("물품 문의", "짐토리 안심 채팅으로 문의가 접수됐어요. 체험 버전에서는 답변 흐름을 미리 확인할 수 있어요.")} />;
   } else if (path === "/checkout") {
-    screen = <Checkout rental={selectedRental} onBack={() => navigate(`/rentals/${selectedRental.id}`)} onComplete={(total) => {
-      const newOrder: Order = { id: `RT-${Date.now().toString().slice(-6)}`, type: "대여", title: selectedRental.name, status: "대여 승인 대기", date: "2026-07-22", price: total, image: selectedRental.image, details: { period: "2026-07-22 ~ 2026-07-25", location: selectedRental.location, rentalFee: selectedRental.price * 3, deposit: selectedRental.deposit, returnDate: "2026-07-25" } };
+    screen = <Checkout rental={selectedRental} onBack={() => navigate(`/rentals/${selectedRental.id}`)} onComplete={({ total, startDate, endDate, days }) => {
+      const newOrder: Order = { id: `RT-${Date.now().toString().slice(-6)}`, type: "대여", title: selectedRental.name, status: "대여 승인 대기", date: startDate, price: total, image: selectedRental.image, details: { period: `${startDate} ~ ${endDate}`, location: selectedRental.location, rentalFee: selectedRental.price * days, deposit: selectedRental.deposit, returnDate: endDate } };
       setOrders((prev) => [newOrder, ...prev]);
+      trackEvent("rental_application_complete", {
+        service_type: "rental",
+        currency: "KRW",
+        item_name: selectedRental.name,
+        item_category: selectedRental.category,
+        rental_start_date: startDate,
+        rental_end_date: endDate,
+        rental_days: days,
+        value: total,
+      });
       setToast("대여 신청이 완료됐어요");
       navigate("/orders");
     }} />;
@@ -487,18 +514,31 @@ function BrandHeader({ onNavigate, back }: { onNavigate?: (path: string) => void
 }
 
 function HomeScreen({ signedIn, orders, favorites, onNavigate, onProtected, onOpenRental, onFavorite }: { signedIn: boolean; orders: Order[]; favorites: number[]; onNavigate: (path: string) => void; onProtected: (path: string) => void; onOpenRental: (rental: Rental) => void; onFavorite: (id: number) => void }) {
+  const openStorageApplication = () => {
+    trackEvent("storage_apply_click", { service_type: "storage", button_location: "home_hero" });
+    onProtected("/storage");
+  };
+  const openPickupService = () => {
+    trackEvent("pickup_service_click", { service_type: "pickup", button_location: "home_quick_start" });
+    onProtected("/storage");
+  };
+  const openRentalList = () => {
+    trackEvent("rental_list_click", { service_type: "rental", button_location: "home_hero" });
+    onNavigate("/rentals");
+  };
+
   return (
     <main className="page home-page">
       <BrandHeader onNavigate={onNavigate} />
       <section className="hero-card">
-        <div className="hero-copy"><span className="eyebrow"><Sparkles size={14} />짐토리 베타</span><h1>짐 걱정은 맡기고,<br /><em>일상은 가볍게.</em></h1><p>문 앞에서 수거하고 안전하게 보관해요.<br />안 쓰는 물건은 대여 수익까지 만들어요.</p><div className="hero-actions"><button className="primary-button" onClick={() => onProtected("/storage")}>짐 보관 신청하기<ChevronRight size={18} /></button><button className="secondary-button" onClick={() => onNavigate("/rentals")}>대여 물품 보기</button></div></div>
+        <div className="hero-copy"><span className="eyebrow"><Sparkles size={14} />짐토리 베타</span><h1>짐 걱정은 맡기고,<br /><em>일상은 가볍게.</em></h1><p>문 앞에서 수거하고 안전하게 보관해요.<br />안 쓰는 물건은 대여 수익까지 만들어요.</p><div className="hero-actions"><button className="primary-button" data-gtm-id="storage-apply" onClick={openStorageApplication}>짐 보관 신청하기<ChevronRight size={18} /></button><button className="secondary-button" data-gtm-id="rental-list" onClick={openRentalList}>대여 물품 보기</button></div></div>
         <div className="hero-art"><span className="hero-bubble bubble-one">문 앞 픽업</span><span className="hero-bubble bubble-two">보관료 절약</span><div className="hero-halo" /><img src="/assets/zimtori-character-3d.png" alt="두 손을 모으고 웃는 짐토리 햄스터" /></div>
       </section>
 
       {signedIn && <section className="status-strip"><div><span>안녕하세요, 체험 사용자님</span><strong>{orders.length ? "진행 중인 이용이 있어요" : "첫 보관을 시작해볼까요?"}</strong></div><div className="status-metrics"><span><b>{orders.length}</b>이용 중</span><span><b>{favorites.length}</b>찜</span><span><b>2,400P</b>포인트</span></div></section>}
 
       <section className="section-block"><div className="section-heading"><div><span className="section-kicker">빠른 시작</span><h2>무엇을 도와드릴까요?</h2></div></div><div className="quick-grid">
-        <button onClick={() => onProtected("/storage")}><span className="quick-icon yellow"><Truck /></span><strong>문 앞 픽업</strong><small>무거운 짐도 편하게</small></button>
+        <button data-gtm-id="pickup-service" onClick={openPickupService}><span className="quick-icon yellow"><Truck /></span><strong>문 앞 픽업</strong><small>무거운 짐도 편하게</small></button>
         <button onClick={() => onProtected("/storage")}><span className="quick-icon cream"><Warehouse /></span><strong>안심 보관</strong><small>기간만 골라 맡겨요</small></button>
         <button onClick={() => onNavigate("/rentals")}><span className="quick-icon mint"><PackageOpen /></span><strong>물품 빌리기</strong><small>필요한 만큼만</small></button>
         <button onClick={() => onProtected("/lend/new")}><span className="quick-icon peach"><HandCoins /></span><strong>물품 맡기기</strong><small>보관하며 수익화</small></button>
@@ -520,7 +560,12 @@ function RentalCard({ rental, favorite, onOpen, onFavorite }: { rental: Rental; 
 }
 
 function LoginScreen({ onBack, onDemo }: { onBack: () => void; onDemo: () => void }) {
-  return <main className="auth-page"><button className="floating-back" onClick={onBack}><ArrowLeft size={22} /></button><div className="auth-art"><div className="auth-halo" /><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /></div><img className="auth-logo" src="/assets/zimtori-wordmark.png" alt="짐토리" /><h1>짐 걱정 없는 일상,<br />짐토리와 시작해요</h1><p>체험 계정으로 신청과 대여 기능을<br />부담 없이 둘러보세요.</p><div className="auth-buttons"><button className="demo-login" onClick={onDemo}><Sparkles size={17} />체험 계정으로 둘러보기</button></div><small className="auth-note">체험 데이터는 현재 이용 중인 브라우저에만 저장돼요.</small></main>;
+  const useDemoAccount = () => {
+    trackEvent("demo_account_click", { method: "demo_account", button_location: "login" });
+    onDemo();
+  };
+
+  return <main className="auth-page"><button className="floating-back" onClick={onBack}><ArrowLeft size={22} /></button><div className="auth-art"><div className="auth-halo" /><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /></div><img className="auth-logo" src="/assets/zimtori-wordmark.png" alt="짐토리" /><h1>짐 걱정 없는 일상,<br />짐토리와 시작해요</h1><p>체험 계정으로 신청과 대여 기능을<br />부담 없이 둘러보세요.</p><div className="auth-buttons"><button className="demo-login" data-gtm-id="demo-account" onClick={useDemoAccount}><Sparkles size={17} />체험 계정으로 둘러보기</button></div><small className="auth-note">체험 데이터는 현재 이용 중인 브라우저에만 저장돼요.</small></main>;
 }
 
 function LoginNeeded({ onLogin }: { onLogin: () => void }) {
@@ -545,9 +590,11 @@ function StorageFlow({ draft, setDraft, onBack, onGoLend, onComplete }: { draft:
   const [currentPosition, setCurrentPosition] = useState<CurrentPosition | null>(null);
   const [locationFeedback, setLocationFeedback] = useState<LocationFeedback | null>(null);
   const [error, setError] = useState("");
+  const [agreed, setAgreed] = useState(true);
   const locationWatchRef = useRef<number | null>(null);
   const locationTimerRef = useRef<number | null>(null);
   const bestPositionRef = useRef<CurrentPosition | null>(null);
+  const submittingRef = useRef(false);
   const steps = ["소개", "상황", "위치", "물품", "방식", "대여", "견적", "완료"];
   const filteredStations = useMemo(() => {
     const allowed = line === "전체" ? allStationPoints : allStationPoints.filter((station) => station.lines.includes(line));
@@ -585,9 +632,28 @@ function StorageFlow({ draft, setDraft, onBack, onGoLend, onComplete }: { draft:
     if (step === 1 && !draft.situation) return setError("보관이 필요한 상황을 선택해주세요.");
     if (step === 2 && !draft.station) return setError("픽업 또는 방문할 역을 선택해주세요.");
     if (step === 3 && !draft.cabinet) return setError("짐 수량에 맞는 캐비닛을 선택해주세요.");
+    if (step === 3 && (!draft.startDate || !draft.endDate)) return setError("보관 시작일과 종료 예정일을 입력해주세요.");
+    if (step === 3 && draft.endDate <= draft.startDate) return setError("종료 예정일은 시작일보다 늦어야 해요.");
     if (step === 4 && draft.method === "pickup" && !draft.baseAddress.trim()) return setError("픽업 기본 주소를 입력해주세요.");
     if (step === 4 && draft.method === "pickup" && Number(draft.pickupEnd.slice(0, 2)) <= Number(draft.pickupStart.slice(0, 2))) return setError("종료 시간은 시작 시간보다 늦어야 해요.");
-    if (step === 6) { onComplete(); setStep(7); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    if (step === 6 && !agreed) return setError("필수 약관과 보관 유의사항에 동의해주세요.");
+    if (step === 6) {
+      if (submittingRef.current) return;
+      submittingRef.current = true;
+      onComplete();
+      trackEvent("storage_application_complete", {
+        service_type: "storage",
+        pickup_selected: draft.method === "pickup",
+        station_name: draft.station,
+        storage_size: draft.cabinet,
+        storage_period: `${draft.startDate} ~ ${draft.endDate}`,
+        value: estimate,
+        currency: "KRW",
+      });
+      setStep(7);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     setStep((current) => Math.min(7, current + 1));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -701,11 +767,11 @@ function StorageFlow({ draft, setDraft, onBack, onGoLend, onComplete }: { draft:
       {step === 3 && <div><StepTitle kicker="STEP 3" title="보관할 캐비닛을 선택해주세요" desc="짐 수량에 맞는 크기를 고르면 월 예상 금액을 바로 확인할 수 있어요." /><div className="branch-selector"><MapPin size={19} /><div><small>선택한 보관 위치</small><strong>{draft.station || "역을 먼저 선택해주세요"}</strong></div></div><div className="cabinet-grid">{cabinetOptions.map((cabinet) => <button key={cabinet.id} className={draft.cabinet === cabinet.id ? "selected" : ""} onClick={() => setDraft((prevDraft) => ({ ...prevDraft, cabinet: cabinet.id }))}><img src={cabinet.image} alt={`${cabinet.id} 캐비닛 제품 이미지`} /><div><strong>{cabinet.id} 캐비닛</strong><span>{cabinet.boxes}</span><b>월 {won(cabinet.price)}</b></div>{draft.cabinet === cabinet.id && <i><Check size={16} /></i>}</button>)}</div>{selectedCabinet && <div className="cabinet-summary"><Boxes size={20} /><div><small>선택한 캐비닛</small><strong>{selectedCabinet.id} 캐비닛 · {selectedCabinet.boxes}</strong></div><b>월 {won(selectedCabinet.price)}</b></div>}<div className="box-standard"><div className="box-visual"><span /><span /><span /></div><div><strong>짐토리 기준 박스</strong><p>박스 사이즈 55×40×36cm</p></div></div><div className="date-card"><h3><CalendarDays size={19} />보관 기간</h3><label><span>시작일</span><input type="date" value={draft.startDate} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, startDate: event.target.value }))} /></label><label><span>종료 예정일</span><input type="date" value={draft.endDate} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, endDate: event.target.value }))} /></label></div></div>}
       {step === 4 && <div><StepTitle kicker="STEP 4" title="어떻게 맡길까요?" desc="내 일정에 맞는 방법을 선택해주세요." /><div className="method-grid"><button className={draft.method === "pickup" ? "selected" : ""} onClick={() => setDraft((prevDraft) => ({ ...prevDraft, method: "pickup" }))}><span><Truck /></span><b>문 앞 픽업</b><p>기사님이 원하는 시간에 방문해요.</p><small>픽업비 6,000원</small>{draft.method === "pickup" && <i><Check size={16} /></i>}</button><button className={draft.method === "dropoff" ? "selected" : ""} onClick={() => setDraft((prevDraft) => ({ ...prevDraft, method: "dropoff" }))}><span><Warehouse /></span><b>직접 맡기기</b><p>선택한 거점에 예약하고 방문해요.</p><small>방문 비용 무료</small>{draft.method === "dropoff" && <i><Check size={16} /></i>}</button></div>{draft.method === "pickup" && <div className="form-card pickup-form"><label><span>기본 주소</span><input value={draft.baseAddress} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, baseAddress: event.target.value }))} placeholder="예: 서울 서대문구 연세로 12" /></label><label><span>상세 주소</span><input value={draft.detailAddress} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, detailAddress: event.target.value }))} placeholder="동·호수 또는 건물명을 입력해주세요" /></label><div className="time-field"><label><span>픽업 시작</span><select value={draft.pickupStart} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, pickupStart: event.target.value }))}>{timeOptions.slice(0, 24).map((time) => <option key={time}>{time}</option>)}</select></label><i>부터</i><label><span>픽업 종료</span><select value={draft.pickupEnd} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, pickupEnd: event.target.value }))}>{timeOptions.slice(1).map((time) => <option key={time}>{time}</option>)}</select></label></div><label><span>기사님께 전달할 내용</span><input value={draft.pickupRequest} onChange={(event) => setDraft((prevDraft) => ({ ...prevDraft, pickupRequest: event.target.value }))} placeholder="예: 도착 전 연락 부탁드려요" /></label><div className="time-help"><Clock3 size={17} />00:00부터 24:00까지 한 시간 단위로 선택할 수 있어요.</div></div>}</div>}
       {step === 5 && <div><StepTitle kicker="STEP 5" title="안 쓰는 물품, 대여 맡길까요?" desc="위탁 대여를 선택하면 물품 등록 페이지로 이동해요." /><div className="consignment-hero"><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /><div><span>예상 월 수익</span><strong>최대 28,000원</strong><p>캐리어·캠핑용품 기준 예시예요.</p></div></div><div className="choice-cards"><button className={draft.consignment ? "selected" : ""} onClick={() => { setDraft((prevDraft) => ({ ...prevDraft, consignment: true })); onGoLend(); }}><HandCoins /><div><b>보관하며 대여 맡길래요</b><p>사진과 물품 정보를 등록하러 이동해요.</p></div><ChevronRight size={19} /></button><button className={!draft.consignment ? "selected" : ""} onClick={() => setDraft((prevDraft) => ({ ...prevDraft, consignment: false }))}><ShieldCheck /><div><b>보관만 할래요</b><p>내가 찾을 때까지 안전하게 보관해요.</p></div>{!draft.consignment && <Check size={19} />}</button></div><div className="notice-card"><Info /><div><strong>입력한 보관 신청 내용은 유지돼요</strong><p>물품 등록 페이지에서 돌아와도 캐비닛과 주소 정보가 사라지지 않아요.</p></div></div></div>}
-      {step === 6 && <div><StepTitle kicker="STEP 6" title="신청 내용을 확인해주세요" desc="아직 결제되지 않으며, 최종 확인 후 접수돼요." /><div className="summary-card"><SummaryRow label="보관 상황" value={draft.situation} /><SummaryRow label="보관 위치" value={draft.station} /><SummaryRow label="캐비닛" value={draft.cabinet ? `${draft.cabinet} 캐비닛 · ${selectedCabinet?.boxes}` : ""} /><SummaryRow label="보관 기간" value={`${draft.startDate} ~ ${draft.endDate}`} /><SummaryRow label="보관 방식" value={draft.method === "pickup" ? "문 앞 픽업" : "직접 맡기기"} />{draft.method === "pickup" && <SummaryRow label="픽업 주소" value={`${draft.baseAddress} ${draft.detailAddress}`.trim()} />}{draft.method === "pickup" && <SummaryRow label="픽업 시간" value={`${draft.pickupStart} - ${draft.pickupEnd}`} />}<SummaryRow label="위탁 대여" value={draft.consignment ? "검수 신청 완료" : "신청 안 함"} /></div><div className="price-card"><div><span>예상 보관료</span><strong>{won(estimate)}</strong></div>{draft.consignment && <div className="income-row"><span>예상 대여 수익</span><strong>- {won(18000)}</strong></div>}<hr /><div className="total-row"><span>예상 최종 부담</span><strong>{won(Math.max(0, estimate - (draft.consignment ? 18000 : 0)))}</strong></div><small>실제 금액은 물품 검수와 보관 기간에 따라 달라질 수 있어요.</small></div><label className="agree-check"><input type="checkbox" defaultChecked /><span><Check size={14} /></span>필수 약관과 보관 유의사항을 확인했어요.</label></div>}
+      {step === 6 && <div><StepTitle kicker="STEP 6" title="신청 내용을 확인해주세요" desc="아직 결제되지 않으며, 최종 확인 후 접수돼요." /><div className="summary-card"><SummaryRow label="보관 상황" value={draft.situation} /><SummaryRow label="보관 위치" value={draft.station} /><SummaryRow label="캐비닛" value={draft.cabinet ? `${draft.cabinet} 캐비닛 · ${selectedCabinet?.boxes}` : ""} /><SummaryRow label="보관 기간" value={`${draft.startDate} ~ ${draft.endDate}`} /><SummaryRow label="보관 방식" value={draft.method === "pickup" ? "문 앞 픽업" : "직접 맡기기"} />{draft.method === "pickup" && <SummaryRow label="픽업 주소" value={`${draft.baseAddress} ${draft.detailAddress}`.trim()} />}{draft.method === "pickup" && <SummaryRow label="픽업 시간" value={`${draft.pickupStart} - ${draft.pickupEnd}`} />}<SummaryRow label="위탁 대여" value={draft.consignment ? "검수 신청 완료" : "신청 안 함"} /></div><div className="price-card"><div><span>예상 보관료</span><strong>{won(estimate)}</strong></div>{draft.consignment && <div className="income-row"><span>예상 대여 수익</span><strong>- {won(18000)}</strong></div>}<hr /><div className="total-row"><span>예상 최종 부담</span><strong>{won(Math.max(0, estimate - (draft.consignment ? 18000 : 0)))}</strong></div><small>실제 금액은 물품 검수와 보관 기간에 따라 달라질 수 있어요.</small></div><label className="agree-check"><input type="checkbox" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} /><span><Check size={14} /></span>필수 약관과 보관 유의사항을 확인했어요.</label></div>}
       {step === 7 && <div className="complete-step"><div className="complete-mark"><Check size={38} /></div><img src="/assets/zimtori-character-3d.png" alt="짐토리 캐릭터" /><span>신청번호 ST-072026</span><h1>보관 신청을<br />완료했어요!</h1><p>담당자가 캐비닛과 일정을 확인한 뒤<br />알림으로 안내해드릴게요.</p><div className="complete-info"><div><Clock3 /><span>픽업 예정</span><strong>{draft.startDate}<br />{draft.method === "pickup" ? `${draft.pickupStart} - ${draft.pickupEnd}` : "직접 방문"}</strong></div><div><MapPin /><span>보관 위치</span><strong>{draft.station}<br />{draft.cabinet} 캐비닛</strong></div></div><button className="primary-button" onClick={() => { setStep(0); onBack(); }}>홈으로 돌아가기</button></div>}
       {error && <div className="error-message"><AlertCircle size={17} />{error}</div>}
     </section>
-    {step < 7 && <div className="wizard-footer"><button className="ghost-button" onClick={prev}>{step === 0 ? "나중에" : "이전"}</button><button className="primary-button" onClick={next}>{step === 6 ? "신청 완료하기" : "다음"}<ChevronRight size={18} /></button></div>}
+    {step < 7 && <div className="wizard-footer"><button className="ghost-button" onClick={prev}>{step === 0 ? "나중에" : "이전"}</button>{step === 6 ? <button className="primary-button" data-gtm-id="storage-complete" onClick={next}>신청 완료하기<ChevronRight size={18} /></button> : <button className="primary-button" onClick={next}>다음<ChevronRight size={18} /></button>}</div>}
   </main>;
 }
 
@@ -899,10 +965,25 @@ function RentalDetail({ rental, favorite, onBack, onFavorite, onCheckout, onQues
   return <main className="page detail-page"><div className="detail-visual" style={{ background: rental.tone }}><button className="floating-back" onClick={onBack} aria-label="대여 목록으로 돌아가기"><ArrowLeft size={22} /></button><button className={`detail-heart ${favorite ? "active" : ""}`} onClick={onFavorite} aria-label="찜하기"><Heart size={21} fill={favorite ? "currentColor" : "none"} /></button><img className="detail-product-image" src={rental.image} alt={`${rental.name} 제품 사진`} onError={(event) => { event.currentTarget.src = "/assets/zimtori-symbol.png"; }} /><div className="visual-badge"><BadgeCheck size={15} />짐토리 검수 완료</div></div><section className="detail-copy"><div className="detail-category">{rental.category}<span>대여 가능</span></div><h1>{rental.name}</h1><div className="rating-line"><Star size={16} fill="currentColor" />{rental.rating}<u>후기 {rental.reviews}개</u><MapPin size={15} />{rental.location}</div><div className="price-line"><strong>{won(rental.price)}</strong><span>/ 1일</span><small>보증금 {won(rental.deposit)}</small></div><hr /><h2>물품 소개</h2><p>{rental.description}</p><div className="owner-card"><div className="owner-avatar">짐</div><div><strong>{rental.owner}</strong><span><ShieldCheck size={14} />본인 인증 · 응답률 98%</span></div><ChevronRight size={18} /></div><h2>대여 가능 날짜</h2><div className="calendar-preview"><div><button onClick={() => setMonth((current) => current === 6 ? 8 : current - 1)} aria-label="이전 달">‹</button><strong>2026년 {month}월</strong><button onClick={() => setMonth((current) => current === 8 ? 6 : current + 1)} aria-label="다음 달">›</button></div><div className="weekdays">{["일", "월", "화", "수", "목", "금", "토"].map((day) => <span key={day}>{day}</span>)}</div><div className="days">{Array.from({ length: 28 }, (_, i) => <button key={i} className={`${i > 18 && i < 26 ? "available" : ""} ${selectedDay === i + 1 ? "selected" : ""}`} onClick={() => setSelectedDay(i + 1)}>{i + 1}</button>)}</div></div><div className="safety-card"><ShieldCheck /><div><strong>짐토리 안심 대여</strong><p>물품 상태 확인과 반납 과정을 기록해요.</p></div></div></section><div className="detail-footer"><button className="question-button" onClick={onQuestion}><MessageCircleQuestion size={20} /><span>문의</span></button><button className="primary-button" onClick={onCheckout}>대여 신청하기</button></div></main>;
 }
 
-function Checkout({ rental, onBack, onComplete }: { rental: Rental; onBack: () => void; onComplete: (total: number) => void }) {
+function Checkout({ rental, onBack, onComplete }: { rental: Rental; onBack: () => void; onComplete: (completion: RentalCompletion) => void }) {
   const [days, setDays] = useState(3);
+  const [startDate, setStartDate] = useState("2026-07-22");
+  const [agreed, setAgreed] = useState(true);
+  const [error, setError] = useState("");
+  const submittingRef = useRef(false);
   const rentalFee = rental.price * days;
-  return <main className="page checkout-page"><BrandHeader back={onBack} /><section className="checkout-body"><StepTitle kicker="대여 신청" title="이용 정보를 확인해주세요" desc="결제는 아직 진행되지 않아요." /><div className="checkout-item"><div style={{ background: rental.tone }}><img src={rental.image} alt={`${rental.name} 제품 사진`} /></div><span><small>{rental.category}</small><strong>{rental.name}</strong><p><MapPin size={14} />{rental.location}</p></span></div><div className="form-card"><label><span>대여 시작일</span><input type="date" defaultValue="2026-07-22" /></label><label><span>대여 기간</span><div className="duration-control"><button onClick={() => setDays(Math.max(1, days - 1))}><Minus size={17} /></button><strong>{days}일</strong><button onClick={() => setDays(days + 1)}><Plus size={17} /></button></div></label><label><span>수령 방법</span><select><option>{rental.location} 직접 수령</option><option>짐토리 배송</option></select></label></div><div className="price-card"><SummaryRow label="대여료" value={won(rentalFee)} /><SummaryRow label="보증금" value={won(rental.deposit)} /><hr /><div className="total-row"><span>결제 예정 금액</span><strong>{won(rentalFee + rental.deposit)}</strong></div><small>현재는 베타 테스트 신청이며 실제 결제되지 않아요.</small></div><div className="notice-card"><CreditCard /><div><strong>결제 기능 연결 전 체험 화면이에요</strong><p>신청 흐름은 저장되며 실제 비용은 청구되지 않아요.</p></div></div><label className="agree-check"><input type="checkbox" defaultChecked /><span><Check size={14} /></span>대여 유의사항과 반납 규정을 확인했어요.</label></section><div className="wizard-footer"><button className="ghost-button" onClick={onBack}>이전</button><button className="primary-button" onClick={() => onComplete(rentalFee + rental.deposit)}>대여 신청 완료</button></div></main>;
+  const completeRental = () => {
+    setError("");
+    if (!startDate) return setError("대여 시작일을 선택해주세요.");
+    if (!Number.isInteger(days) || days < 1) return setError("대여 기간을 확인해주세요.");
+    if (!agreed) return setError("대여 유의사항과 반납 규정에 동의해주세요.");
+    if (submittingRef.current) return;
+
+    submittingRef.current = true;
+    onComplete({ total: rentalFee + rental.deposit, startDate, endDate: addDays(startDate, days), days });
+  };
+
+  return <main className="page checkout-page"><BrandHeader back={onBack} /><section className="checkout-body"><StepTitle kicker="대여 신청" title="이용 정보를 확인해주세요" desc="결제는 아직 진행되지 않아요." /><div className="checkout-item"><div style={{ background: rental.tone }}><img src={rental.image} alt={`${rental.name} 제품 사진`} /></div><span><small>{rental.category}</small><strong>{rental.name}</strong><p><MapPin size={14} />{rental.location}</p></span></div><div className="form-card"><label><span>대여 시작일</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label><span>대여 기간</span><div className="duration-control"><button onClick={() => setDays(Math.max(1, days - 1))}><Minus size={17} /></button><strong>{days}일</strong><button onClick={() => setDays(days + 1)}><Plus size={17} /></button></div></label><label><span>수령 방법</span><select><option>{rental.location} 직접 수령</option><option>짐토리 배송</option></select></label></div><div className="price-card"><SummaryRow label="대여료" value={won(rentalFee)} /><SummaryRow label="보증금" value={won(rental.deposit)} /><hr /><div className="total-row"><span>결제 예정 금액</span><strong>{won(rentalFee + rental.deposit)}</strong></div><small>현재는 베타 테스트 신청이며 실제 결제되지 않아요.</small></div><div className="notice-card"><CreditCard /><div><strong>결제 기능 연결 전 체험 화면이에요</strong><p>신청 흐름은 저장되며 실제 비용은 청구되지 않아요.</p></div></div><label className="agree-check"><input type="checkbox" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} /><span><Check size={14} /></span>대여 유의사항과 반납 규정을 확인했어요.</label>{error && <div className="error-message"><AlertCircle size={17} />{error}</div>}</section><div className="wizard-footer"><button className="ghost-button" onClick={onBack}>이전</button><button className="primary-button" data-gtm-id="rental-complete" onClick={completeRental}>대여 신청 완료</button></div></main>;
 }
 
 function LendForm({ onBack, onComplete }: { onBack: () => void; onComplete: (submission: LendSubmission) => Promise<void> }) {
